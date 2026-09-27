@@ -145,7 +145,10 @@ archive_write_lrzip_open(struct archive_write_filter *f)
 	int r;
 
 	archive_string_init(&as);
-	archive_strcpy(&as, "lrzip -q");
+	/* -q alone still writes progress output to stderr when writing
+	 * to a pipe (as opposed to a real file); -Q suppresses that
+	 * while still reporting fatal errors. */
+	archive_strcpy(&as, "lrzip -q -Q");
 
 	/* Specify compression type. */
 	switch (lrzip->compression) {
