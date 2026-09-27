@@ -107,7 +107,10 @@ lrzip_bidder_init(struct archive_read_filter *f)
 {
 	int r;
 
-	r = __archive_read_program(f, "lrzip -d -q");
+	/* -q alone still writes progress output to stderr when reading
+	 * from a pipe (as opposed to a real file); -Q suppresses that
+	 * while still reporting fatal errors. */
+	r = __archive_read_program(f, "lrzip -d -q -Q");
 	/* Note: We set the format here even if __archive_read_program()
 	 * above fails.  We do, after all, know what the format is
 	 * even if we weren't able to read it. */
