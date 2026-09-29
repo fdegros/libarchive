@@ -797,6 +797,7 @@ process_extra(struct archive_read *a, struct archive_entry *entry,
 {
 	struct zip *zip = a->format->data;
 	unsigned offset = 0;
+	int ret = ARCHIVE_OK;
 
 	if (extra_length == 0) {
 		return ARCHIVE_OK;
@@ -855,7 +856,8 @@ process_extra(struct archive_read *a, struct archive_entry *entry,
 					    ARCHIVE_ERRNO_FILE_FORMAT,
 					    "Malformed 64-bit "
 					    "uncompressed size");
-					return ARCHIVE_WARN;
+					ret = ARCHIVE_WARN;
+					break;
 				}
 				zip_entry->uncompressed_size = t;
 				offset += 8;
@@ -870,7 +872,8 @@ process_extra(struct archive_read *a, struct archive_entry *entry,
 					    ARCHIVE_ERRNO_FILE_FORMAT,
 					    "Malformed 64-bit "
 					    "compressed size");
-					return ARCHIVE_WARN;
+					ret = ARCHIVE_WARN;
+					break;
 				}
 				zip_entry->compressed_size = t;
 				offset += 8;
@@ -885,7 +888,8 @@ process_extra(struct archive_read *a, struct archive_entry *entry,
 					    ARCHIVE_ERRNO_FILE_FORMAT,
 					    "Malformed 64-bit "
 					    "local header offset");
-					return ARCHIVE_WARN;
+					ret = ARCHIVE_WARN;
+					break;
 				}
 				zip_entry->local_header_offset = t;
 				offset += 8;
@@ -1026,7 +1030,8 @@ process_extra(struct archive_read *a, struct archive_entry *entry,
 				archive_set_error(&a->archive,
 				    ARCHIVE_ERRNO_FILE_FORMAT,
 				    "Incomplete extended time field");
-				return ARCHIVE_WARN;
+				ret = ARCHIVE_WARN;
+				break;
 			}
 			flags = p[offset];
 			offset++;
@@ -1308,7 +1313,8 @@ process_extra(struct archive_read *a, struct archive_entry *entry,
 				archive_set_error(&a->archive,
 				    ARCHIVE_ERRNO_FILE_FORMAT,
 				    "Incomplete AES field");
-				return ARCHIVE_WARN;
+				ret = ARCHIVE_WARN;
+				break;
 			}
 			if (p[offset + 2] == 'A' && p[offset + 3] == 'E') {
 				/* Vendor version. */
@@ -1326,7 +1332,7 @@ process_extra(struct archive_read *a, struct archive_entry *entry,
 		}
 		offset += datasize;
 	}
-	return ARCHIVE_OK;
+	return ret;
 }
 
 /*
