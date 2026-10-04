@@ -1906,7 +1906,7 @@ init_decompression(struct archive_read *a, struct _7zip *zip,
 			archive_entry_set_is_data_encrypted(a->entry, 1);
 			zip->has_encrypted_entries = 1;
 		}
-		archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
+		archive_set_error(&a->archive, ARCHIVE_ERRNO_ENCRYPTION_UNSUPPORTED,
 		    "Crypto codec not supported yet (ID: 0x%jX)",
 		    (uintmax_t)zip->codec);
 		return (ARCHIVE_FAILED);
@@ -4349,7 +4349,7 @@ setup_7z_encryption(struct archive_read *a, struct _7zip *zip,
 
 	passphrase = zip->passphrase;
 	if (passphrase == NULL) {
-		archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
+		archive_set_error(&a->archive, ARCHIVE_ERRNO_PASSPHRASE_REQUIRED,
 		    "Passphrase required for this 7-Zip encrypted archive");
 		return (ARCHIVE_FAILED);
 	}
@@ -4620,7 +4620,7 @@ setup_decode_folder_once(struct archive_read *a, struct _7z_folder *folder,
 					archive_entry_set_is_metadata_encrypted(a->entry, 1);
 				}
 				archive_set_error(&(a->archive),
-					ARCHIVE_ERRNO_MISC,
+					ARCHIVE_ERRNO_ENCRYPTION_UNSUPPORTED,
 					"The %s is encrypted, "
 					"but currently not supported", cname);
 				return (header ? ARCHIVE_FATAL : ARCHIVE_FAILED);
@@ -5012,9 +5012,14 @@ setup_decode_folder(struct archive_read *a, struct _7z_folder *folder,
 		if (passphrase == NULL) {
 			if (archive_errno(&a->archive) == ENOMEM)
 				return (ARCHIVE_FATAL);
-			archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
-			    retry == 0 ? "Passphrase required for this 7-Zip encrypted archive" :
-			    "Incorrect passphrase");
+			if (retry == 0)
+				archive_set_error(&a->archive,
+				    ARCHIVE_ERRNO_PASSPHRASE_REQUIRED,
+				    "Passphrase required for this 7-Zip encrypted archive");
+			else
+				archive_set_error(&a->archive,
+				    ARCHIVE_ERRNO_PASSPHRASE_INCORRECT,
+				    "Incorrect passphrase");
 			return (header ? ARCHIVE_FATAL : ARCHIVE_FAILED);
 		}
 		/* The callback's storage may change on its next invocation.
@@ -5060,7 +5065,7 @@ setup_decode_folder(struct archive_read *a, struct _7z_folder *folder,
 		if (r == ARCHIVE_OK)
 			return (setup_decode_folder_once(a, folder, header));
 	}
-	archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
+	archive_set_error(&a->archive, ARCHIVE_ERRNO_PASSPHRASE_INCORRECT,
 	    "Too many incorrect passphrases");
 	return (header ? ARCHIVE_FATAL : ARCHIVE_FAILED);
 }
