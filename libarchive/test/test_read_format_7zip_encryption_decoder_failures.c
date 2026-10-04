@@ -208,6 +208,8 @@ verify_decoder_failure(const char *ref, enum decoder_fault mode)
 		if (mode == FAULT_DATA) {
 			assertEqualIntA(a, ARCHIVE_FAILED, n);
 			assertEqualInt(1, calls);
+			assertEqualInt(ARCHIVE_ERRNO_PASSPHRASE_INCORRECT,
+			    archive_errno(a));
 			assertEqualString("Incorrect passphrase", archive_error_string(a));
 		} else {
 			if (mode == FAULT_CBC_INIT || mode == FAULT_KDF)

@@ -179,7 +179,8 @@ verify_passwords(const char *ref, const struct password_test *test,
 		    archive_read_next_header(control, &ce));
 	} else {
 		assert(r < ARCHIVE_OK);
-		assertEqualInt(-1, archive_errno(a));
+		assertEqualInt(ARCHIVE_ERRNO_PASSPHRASE_INCORRECT,
+		    archive_errno(a));
 		assertEqualString("Incorrect passphrase", archive_error_string(a));
 	}
 	failure("%s, %s", ref, test->name);

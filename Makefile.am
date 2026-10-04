@@ -654,6 +654,7 @@ libarchive_test_SOURCES= \
 	libarchive/test/test_read_format_zip_ntfs_precedence.c \
 	libarchive/test/test_read_format_zip_ntfs_timestamp.c \
 	libarchive/test/test_read_format_zip_padded.c \
+	libarchive/test/test_read_format_zip_passphrase_errno.c \
 	libarchive/test/test_read_format_zip_pkware_unix_special.c \
 	libarchive/test/test_read_format_zip_seek_data.c \
 	libarchive/test/test_read_format_zip_sfx.c \
