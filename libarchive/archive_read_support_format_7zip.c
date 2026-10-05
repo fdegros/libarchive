@@ -4174,7 +4174,7 @@ setup_7z_encryption(struct archive_read *a, struct _7zip *zip,
 	__archive_read_reset_passphrase(a);
 	passphrase = __archive_read_next_passphrase(a);
 	if (passphrase == NULL) {
-		archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
+		archive_set_error(&a->archive, ARCHIVE_ERRNO_PASSPHRASE_REQUIRED,
 		    "Passphrase required for this 7-Zip encrypted archive");
 		return (ARCHIVE_FAILED);
 	}
