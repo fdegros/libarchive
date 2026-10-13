@@ -178,10 +178,10 @@ static const unsigned char archive_ntfs_precedence_ut[] = {
 /* extra field 0x5455 "UT" (coarser; must NOT win for m/atime) */
 	0x55, 0x54,          /* extra field ID = 0x5455 */
 	0x0d, 0x00,          /* extra field size = 13 */
-	0x07,                /* flags: mtime, atime, ctime all present */
+	0x07,                /* flags: mtime, atime, creation time all present */
 	0x00, 0x10, 0x5e, 0x5f, /* mtime -> 1600000000 (must be ignored) */
 	0x64, 0x10, 0x5e, 0x5f, /* atime -> 1600000100 (must be ignored) */
-	0xc8, 0x10, 0x5e, 0x5f, /* ctime -> 1600000200, unaffected */
+	0xc8, 0x10, 0x5e, 0x5f, /* creation time -> 1600000200, ignored: NTFS wins */
 	0x68, 0x69, 0x0a,    /* "hi\n" */
 /* --- central directory header --- */
 	0x50, 0x4b, 0x01, 0x02, /* central directory header signature */
@@ -214,10 +214,10 @@ static const unsigned char archive_ntfs_precedence_ut[] = {
 /* extra field 0x5455 "UT" (coarser; must NOT win for m/atime) */
 	0x55, 0x54,          /* extra field ID = 0x5455 */
 	0x0d, 0x00,          /* extra field size = 13 */
-	0x07,                /* flags: mtime, atime, ctime all present */
+	0x07,                /* flags: mtime, atime, creation time all present */
 	0x00, 0x10, 0x5e, 0x5f, /* mtime -> 1600000000 (must be ignored) */
 	0x64, 0x10, 0x5e, 0x5f, /* atime -> 1600000100 (must be ignored) */
-	0xc8, 0x10, 0x5e, 0x5f, /* ctime -> 1600000200, unaffected */
+	0xc8, 0x10, 0x5e, 0x5f, /* creation time -> 1600000200, ignored: NTFS wins */
 /* --- end of central directory record --- */
 	0x50, 0x4b, 0x05, 0x06, /* end of central directory signature */
 	0x00, 0x00,          /* number of this disk */
@@ -250,9 +250,9 @@ DEFINE_TEST(test_read_format_zip_ntfs_precedence_ut)
 	assert(archive_entry_birthtime_is_set(ae));
 	assertEqualInt(1700000200LL, archive_entry_birthtime(ae));
 	assertEqualInt(300000000L, archive_entry_birthtime_nsec(ae));
-	/* UT's ctime is POSIX ctime, a separate field the NTFS precedence
-	 * logic doesn't touch either way: it applies normally. */
-	assertEqualInt(1600000200LL, archive_entry_ctime(ae));
+	/* UT's creation time doesn't override the NTFS one, and ZIP has
+	 * no source for the POSIX ctime. */
+	assertEqualInt(0, archive_entry_ctime_is_set(ae));
 
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_close(a));
 	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
