@@ -248,10 +248,10 @@ static const unsigned char archive_dos_mtime_precedence_ut[] = {
 /* extra field 0x5455 "UT" (only copy: must set mtime) */
 	0x55, 0x54,             /* extra field ID = 0x5455 */
 	0x0d, 0x00,             /* extra field size = 13 */
-	0x07,                   /* flags: mtime, atime, ctime all present */
+	0x07,                   /* flags: mtime, atime, creation time all present */
 	0x00, 0xf1, 0x53, 0x65, /* mtime -> 1700000000 */
 	0x64, 0xf1, 0x53, 0x65, /* atime -> 1700000100 */
-	0xc8, 0xf1, 0x53, 0x65, /* ctime -> 1700000200 */
+	0xc8, 0xf1, 0x53, 0x65, /* creation time -> 1700000200 */
 /* --- end of central directory record --- */
 	0x50, 0x4b, 0x05, 0x06, /* end of central directory signature */
 	0x00, 0x00,             /* number of this disk */
@@ -279,7 +279,8 @@ DEFINE_TEST(test_read_format_zip_dos_mtime_precedence_ut)
 	assertEqualString("test.txt", archive_entry_pathname(ae));
 	assertEqualInt(1700000000LL, archive_entry_mtime(ae));
 	assertEqualInt(1700000100LL, archive_entry_atime(ae));
-	assertEqualInt(1700000200LL, archive_entry_ctime(ae));
+	assertEqualInt(1700000200LL, archive_entry_birthtime(ae));
+	assertEqualInt(0, archive_entry_ctime_is_set(ae));
 
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_close(a));
 	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
