@@ -84,6 +84,7 @@ SET(libarchive_SOURCES
   archive_read_set_format_from_filename.c
   archive_read_set_options.c
   archive_read_support_filter_all.c
+  archive_read_support_filter_brotli.c
   archive_read_support_filter_by_code.c
   archive_read_support_filter_bzip2.c
   archive_read_support_filter_compress.c
