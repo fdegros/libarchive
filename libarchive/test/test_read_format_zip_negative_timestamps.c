@@ -35,7 +35,7 @@
  * one about 2^32 seconds (~136 years) in the future. Each archive below
  * has a single entry ("test.txt") with mtime = -86400 (1969-12-31
  * 00:00:00 UTC) and atime = -172800 (1969-12-30 00:00:00 UTC); the UT
- * variant also sets ctime = -259200 (1969-12-29 00:00:00 UTC).
+ * variant also sets the creation time = -259200 (1969-12-29 00:00:00 UTC).
  */
 
 /* 0x000D "PKWARE Unix Extra Field": AcTime, ModTime, UID, GID. */
@@ -110,7 +110,8 @@ DEFINE_TEST(test_read_format_zip_negative_timestamp_ut)
 	assertEqualString("test.txt", archive_entry_pathname(ae));
 	assertEqualInt(-86400, archive_entry_mtime(ae));
 	assertEqualInt(-172800, archive_entry_atime(ae));
-	assertEqualInt(-259200, archive_entry_ctime(ae));
+	assertEqualInt(-259200, archive_entry_birthtime(ae));
+	assertEqualInt(0, archive_entry_ctime_is_set(ae));
 
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_close(a));
 	assertEqualInt(ARCHIVE_OK, archive_read_free(a));

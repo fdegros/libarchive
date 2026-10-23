@@ -143,7 +143,7 @@ DEFINE_TEST(test_read_format_zip_ambiguous_timestamp_pkware_unix)
  * 1960-01-01 00:00:00 UTC).
  * atime = 0xed300881 (one second past the cutoff -> signed reading,
  * 1960-01-01 00:00:01 UTC).
- * ctime = 0xffffffff (-1 as signed -> 1969-12-31 23:59:59 UTC, an
+ * creation time = 0xffffffff (-1 as signed -> 1969-12-31 23:59:59 UTC, an
  * ordinary near-1970 value, still handled correctly through the new
  * helper). */
 static const unsigned char archive_ut_ambiguous[] = {
@@ -163,10 +163,10 @@ static const unsigned char archive_ut_ambiguous[] = {
 /* extra field 0x5455 */
 	0x55, 0x54,          /* extra field ID = 0x5455 */
 	0x0d, 0x00,          /* extra field size = 13 */
-	0x07,                /* flags: mtime, atime, ctime all present */
+	0x07,                /* flags: mtime, atime, creation time all present */
 	0x80, 0x08, 0x30, 0xed, /* mtime -> -315619200 (signed) */
 	0x81, 0x08, 0x30, 0xed, /* atime -> -315619199 (signed) */
-	0xff, 0xff, 0xff, 0xff, /* ctime -> -1 (signed) */
+	0xff, 0xff, 0xff, 0xff, /* creation time -> -1 (signed) */
 	0x68, 0x69, 0x0a,    /* "hi\n" */
 /* --- archive_ut_ambiguous: central directory header --- */
 	0x50, 0x4b, 0x01, 0x02, /* central directory header signature */
@@ -190,10 +190,10 @@ static const unsigned char archive_ut_ambiguous[] = {
 /* extra field 0x5455 */
 	0x55, 0x54,          /* extra field ID = 0x5455 */
 	0x0d, 0x00,          /* extra field size = 13 */
-	0x07,                /* flags: mtime, atime, ctime all present */
+	0x07,                /* flags: mtime, atime, creation time all present */
 	0x80, 0x08, 0x30, 0xed, /* mtime -> -315619200 (signed) */
 	0x81, 0x08, 0x30, 0xed, /* atime -> -315619199 (signed) */
-	0xff, 0xff, 0xff, 0xff, /* ctime -> -1 (signed) */
+	0xff, 0xff, 0xff, 0xff, /* creation time -> -1 (signed) */
 /* --- archive_ut_ambiguous: end of central directory record --- */
 	0x50, 0x4b, 0x05, 0x06, /* end of central directory signature */
 	0x00, 0x00,          /* number of this disk */
@@ -221,7 +221,8 @@ DEFINE_TEST(test_read_format_zip_ambiguous_timestamp_ut)
 	assertEqualString("test.txt", archive_entry_pathname(ae));
 	assertEqualInt(-315619200LL, archive_entry_mtime(ae));
 	assertEqualInt(-315619199LL, archive_entry_atime(ae));
-	assertEqualInt(-1LL, archive_entry_ctime(ae));
+	assertEqualInt(-1LL, archive_entry_birthtime(ae));
+	assertEqualInt(0, archive_entry_ctime_is_set(ae));
 
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_close(a));
 	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
