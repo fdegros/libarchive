@@ -51,6 +51,10 @@
 /* A filter code that stands for "lzma or lzip", as in ".tlz". */
 #define	FILTER_LZMA_OR_LZIP	(-1)
 
+/* Filter codes that stand for an external program that reads stdin. */
+#define	FILTER_GPG		(-2)	/* gpg -d */
+#define	FILTER_BASE64		(-3)	/* base64 -d */
+
 enum format {
 	FORMAT_7ZIP,
 	FORMAT_AR,
@@ -74,12 +78,20 @@ struct extension {
 };
 
 /*
- * Extensions of a compression or an encoding applied to a single file.
+ * Extensions of a compression, an encoding or an encryption applied to a
+ * single file. Most are decoded by libarchive itself. The OpenPGP and base64
+ * ones need an external program, which must be installed.
  */
 static const struct extension filter_extensions[] = {
+	{"asc", FILTER_GPG},
+	{"b64", FILTER_BASE64},
+	{"base64", FILTER_BASE64},
+	{"br", ARCHIVE_FILTER_BROTLI},
+	{"brotli", ARCHIVE_FILTER_BROTLI},
 	{"bz", ARCHIVE_FILTER_BZIP2},
 	{"bz2", ARCHIVE_FILTER_BZIP2},
 	{"bzip2", ARCHIVE_FILTER_BZIP2},
+	{"gpg", FILTER_GPG},
 	{"grz", ARCHIVE_FILTER_GRZIP},
 	{"grzip", ARCHIVE_FILTER_GRZIP},
 	{"gz", ARCHIVE_FILTER_GZIP},
@@ -92,6 +104,7 @@ static const struct extension filter_extensions[] = {
 	{"lzma", ARCHIVE_FILTER_LZMA},
 	{"lzo", ARCHIVE_FILTER_LZOP},
 	{"lzop", ARCHIVE_FILTER_LZOP},
+	{"pgp", FILTER_GPG},
 	{"uu", ARCHIVE_FILTER_UU},
 	{"uue", ARCHIVE_FILTER_UU},
 	{"xz", ARCHIVE_FILTER_XZ},
@@ -105,6 +118,7 @@ static const struct extension filter_extensions[] = {
 static const struct extension tar_extensions[] = {
 	{"taz", ARCHIVE_FILTER_COMPRESS},
 	{"tb2", ARCHIVE_FILTER_BZIP2},
+	{"tbr", ARCHIVE_FILTER_BROTLI},
 	{"tbz", ARCHIVE_FILTER_BZIP2},
 	{"tbz2", ARCHIVE_FILTER_BZIP2},
 	{"tgz", ARCHIVE_FILTER_GZIP},
@@ -375,7 +389,7 @@ make_plan(const char *name, size_t length, struct plan *plan)
 			e = find_extension(filter_extensions, ext);
 	} while (e != NULL);
 
-	/* A compressed archive can follow the filters: "backup.tgz.uu". */
+	/* A compressed archive can follow the filters: "backup.tgz.gpg". */
 	if (plan->filter_count < MAX_FILTERS &&
 	    final_extension(name, length, &dot, ext) &&
 	    find_compressed_archive(ext, &filter, &plan->format)) {
@@ -482,6 +496,10 @@ append_filter(struct archive *a, int code)
 	int r;
 
 	switch (code) {
+	case FILTER_GPG:
+		return (archive_read_append_filter_program(a, "gpg -d"));
+	case FILTER_BASE64:
+		return (archive_read_append_filter_program(a, "base64 -d"));
 	case FILTER_LZMA_OR_LZIP:
 		if ((r = archive_read_support_filter_lzma(a)) < ARCHIVE_WARN)
 			return (r);
