@@ -943,7 +943,7 @@ for use with
 .Fl Fl trust-extension .
 Only its extensions matter, and the file does not need to exist.
 For example,
-.Dl curl ... | bsdtar --trust-extension --stdin-name backup.tgz -xf -
+.Dl curl ... | bsdtar --trust-extension --stdin-name backup.tar.br -xf -
 It is an error to use this option without
 .Fl Fl trust-extension ,
 or when the archive is read from a file.
@@ -987,15 +987,16 @@ Use the filename extensions of the archive, which is given with
 .Fl f ,
 to choose the compression filters and the format, instead of detecting
 them from the contents.
+For example,
+.Pa backup.tar.br
+is read as a tar archive compressed with Brotli, which has no signature that
+detection could find.
 A compressed file that isn't named as an archive, such as
 .Pa data.7z.gz ,
 is read as an archive that holds a single file, which is named like the
 archive without its extensions
 .Pq Pa data.7z
 unless the compressed data stores another name.
-Detection cannot read a ZIP or 7-Zip archive that was compressed afterwards:
-it fails for 7-Zip, and for ZIP it reads incomplete information, without
-the Unix modes and the symbolic links.
 .Pp
 The extensions are trusted:
 if they are not recognized, or if the format that they name cannot read the
@@ -1007,6 +1008,18 @@ data that is not compressed that way can read as an empty archive.
 It also fails if the archive is read from standard input, which has no name.
 This option cannot be used with
 .Fl Fl use-compress-program .
+The extensions
+.Pa .gpg ,
+.Pa .pgp ,
+.Pa .asc ,
+.Pa .b64
+and
+.Pa .base64
+run
+.Xr gpg 1
+or
+.Xr base64 1
+to decode the archive.
 .It Fl U , Fl Fl unlink , Fl Fl unlink-first
 (x mode only)
 Unlink files before creating them.

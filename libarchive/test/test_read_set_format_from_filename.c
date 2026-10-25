@@ -60,16 +60,20 @@ DEFINE_TEST(test_read_set_format_from_filename_stem)
 	check_stem("report.cbr.gz", 6);
 	check_stem("report.cbt.xz", 6);
 
-	/* Uuencoded files, with the archives that can follow the filters. */
+	/* Decoders that run an external program, and the uuencoded files. */
+	check_stem("report.txt.b64", 10);
+	check_stem("report.base64", 6);
+	check_stem("report.asc", 6);
+	check_stem("report.pgp", 6);
+	check_stem("report.txt.gz.gpg", 10);
+	check_stem("report.tar.gpg", 6);
+	check_stem("report.tgz.gpg", 6);
+	check_stem("report.zip.gpg", 10);
 	check_stem("report.uue", 6);
-	check_stem("report.txt.gz.uu", 10);
-	check_stem("report.tar.uu", 6);
-	check_stem("report.tgz.uu", 6);
-	check_stem("report.zip.uu", 10);
 
 	/* A compressed cpio archive, and more archive extensions. */
 	check_stem("report.cpgz", 6);
-	check_stem("report.cpgz.uu", 6);
+	check_stem("report.cpgz.gpg", 6);
 	check_stem("report.ddeb", 6);
 	check_stem("report.msu", 6);
 	check_stem("report.xps", 6);
@@ -372,6 +376,35 @@ DEFINE_TEST(test_read_set_format_from_filename_read)
 	free(zip_gz);
 	free(sevenzip);
 	free(sevenzip_gz);
+}
+
+DEFINE_TEST(test_read_set_format_from_filename_base64)
+{
+	static const char encoded[] = "aGVsbG8K\n";
+	char buff[16];
+	struct archive *a;
+	struct archive_entry *ae;
+
+#if defined(_WIN32) && !defined(__CYGWIN__)
+	skipping("base64 is not available");
+#else
+	if (systemf("printf aGVsbG8K | base64 -d >/dev/null 2>&1") != 0) {
+		skipping("base64 -d is not available");
+		return;
+	}
+
+	/* Plain base64 is decoded by running base64. */
+	assert((a = archive_read_new()) != NULL);
+	assertEqualInt(10, (int)archive_read_set_format_from_filename(a,
+	    "report.txt.b64", -1));
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_read_open_memory(a, encoded, sizeof(encoded) - 1));
+	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &ae));
+	assertEqualInt(6, archive_read_data(a, buff, sizeof(buff)));
+	assertEqualMem(buff, "hello\n", 6);
+	assertEqualIntA(a, ARCHIVE_EOF, archive_read_next_header(a, &ae));
+	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
+#endif
 }
 
 static void
