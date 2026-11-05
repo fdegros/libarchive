@@ -832,6 +832,50 @@ archive_read_header_position(struct archive *_a)
 	return (a->header_position);
 }
 
+int
+archive_read_seek_header(struct archive *_a, la_int64_t entry_index)
+{
+	struct archive_read *a = (struct archive_read *)_a;
+	int r;
+
+	archive_check_magic(_a, ARCHIVE_READ_MAGIC,
+	    ARCHIVE_STATE_HEADER | ARCHIVE_STATE_DATA |
+	    ARCHIVE_STATE_DATA_RECOVERY | ARCHIVE_STATE_EOF,
+	    "archive_read_seek_header");
+
+	if (entry_index < 0) {
+		archive_set_error(&a->archive, EINVAL, "Invalid entry index");
+		return (ARCHIVE_FAILED);
+	}
+	if (a->format == NULL || a->format->seek_header == NULL) {
+		archive_set_error(&a->archive, ENOTSUP,
+		    "Cannot seek to a header with this format");
+		return (ARCHIVE_FAILED);
+	}
+	if (!a->filter->can_seek) {
+		archive_set_error(&a->archive, ENOTSUP,
+		    "Cannot seek to a header: the input can't seek");
+		return (ARCHIVE_FAILED);
+	}
+
+	r = (a->format->seek_header)(a, entry_index);
+	if (r == ARCHIVE_FATAL)
+		a->archive.state = ARCHIVE_STATE_FATAL;
+	if (r != ARCHIVE_OK && r != ARCHIVE_EOF)
+		return (r);
+
+	__archive_reset_read_data(&a->archive);
+	a->entry_bytes_declared = -1;
+	if (r == ARCHIVE_EOF) {
+		/* No such entry: the format put the reader at the end. */
+		a->archive.state = ARCHIVE_STATE_EOF;
+		return (ARCHIVE_EOF);
+	}
+	a->archive.file_count = (int)entry_index;
+	a->archive.state = ARCHIVE_STATE_HEADER;
+	return (ARCHIVE_OK);
+}
+
 /*
  * Returns 1 if the archive contains at least one encrypted entry.
  * If the archive format does not support encryption at all,
