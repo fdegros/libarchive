@@ -156,6 +156,19 @@ struct tar {
 	int			 read_concatenated_archives;
 	int			 default_inode;
 	int			 default_dev;
+
+	/*
+	 * Where each header starts, to be able to go back to it, if the
+	 * application asked for the locations to be recorded.
+	 */
+	int64_t			*locations;
+	size_t			 locations_count;
+	size_t			 locations_capacity;
+	char			 record_locations;
+	char			 locations_failed;
+	/* The number of entries, once the end of the archive was found. */
+	int64_t			 entry_count;
+	char			 entry_count_known;
 };
 
 /* Track which size fields were present in the headers */
@@ -211,6 +224,10 @@ static int	archive_read_format_tar_cleanup(struct archive_read *);
 static int	archive_read_format_tar_read_data(struct archive_read *a,
 		    const void **buff, size_t *size, int64_t *offset);
 static int	archive_read_format_tar_skip(struct archive_read *a);
+static int	archive_read_format_tar_seek_header(struct archive_read *a,
+		    int64_t index);
+static int	read_entry_header(struct archive_read *,
+		    struct archive_entry *);
 static int	archive_read_format_tar_read_header(struct archive_read *,
 		    struct archive_entry *);
 static int	checksum(struct archive_read *, const void *);
@@ -291,7 +308,7 @@ archive_read_support_format_tar(struct archive *_a)
 	    archive_read_format_tar_read_data,
 	    archive_read_format_tar_skip,
 	    NULL,
-	    NULL,
+	    archive_read_format_tar_seek_header,
 	    archive_read_format_tar_cleanup,
 	    NULL,
 	    NULL);
@@ -307,6 +324,7 @@ archive_read_format_tar_cleanup(struct archive_read *a)
 	struct tar *tar = a->format->data;
 
 	gnu_clear_sparse_list(tar);
+	free(tar->locations);
 	archive_string_free(&tar->entry_pathname);
 	archive_string_free(&tar->entry_pathname_override);
 	archive_string_free(&tar->entry_uname);
@@ -470,6 +488,9 @@ archive_read_format_tar_options(struct archive_read *a,
 	} else if (strcmp(key, "read_concatenated_archives") == 0) {
 		tar->read_concatenated_archives = (val != NULL && val[0] != 0);
 		return (ARCHIVE_OK);
+	} else if (strcmp(key, "record-locations") == 0) {
+		tar->record_locations = (val != NULL && val[0] != 0);
+		return (ARCHIVE_OK);
 	}
 
 	/* Note: The "warn" return is just to inform the options
@@ -509,9 +530,80 @@ tar_flush_unconsumed(struct archive_read *a, int64_t *unconsumed)
  * just sets up a few things and then calls the internal
  * tar_read_header() function below.
  */
+/* Adds the location of the next header.  Fails if the list can't grow. */
+static int
+add_location(struct tar *tar, int64_t location)
+{
+	size_t capacity;
+	int64_t *locations;
+
+	if (tar->locations_count == tar->locations_capacity) {
+		capacity = tar->locations_capacity;
+		if (capacity > SIZE_MAX / 2 / sizeof(*locations))
+			return (ARCHIVE_FAILED);
+		capacity = capacity == 0 ? 64 : capacity * 2;
+		locations = realloc(tar->locations,
+		    capacity * sizeof(*locations));
+		if (locations == NULL)
+			return (ARCHIVE_FAILED);
+		tar->locations = locations;
+		tar->locations_capacity = capacity;
+	}
+	tar->locations[tar->locations_count++] = location;
+	return (ARCHIVE_OK);
+}
+
+/*
+ * Remembers where the header that is about to be read starts, if asked to,
+ * at the index of that header.  A header that is read again after going back
+ * is already known.
+ */
+static void
+record_location(struct archive_read *a, struct tar *tar)
+{
+	size_t index = (size_t)a->archive.file_count - 1;
+
+	if (!tar->record_locations || tar->locations_failed ||
+	    !a->filter->can_seek || index < tar->locations_count)
+		return;
+	if (index > tar->locations_count) {
+		tar->locations_failed = 1;
+		return;
+	}
+	/* Without this header, the next ones could not be at their index. */
+	if (add_location(tar, a->header_position) != ARCHIVE_OK)
+		tar->locations_failed = 1;
+}
+
+/*
+ * Remembers that there are index entries.  The location of the end of the
+ * archive is the one of the entry at index, so it has to be known.
+ */
+static void
+note_end(struct tar *tar, size_t index)
+{
+	if (index < tar->locations_count) {
+		tar->entry_count = (int64_t)index;
+		tar->entry_count_known = 1;
+	}
+}
+
 static int
 archive_read_format_tar_read_header(struct archive_read *a,
     struct archive_entry *entry)
+{
+	struct tar *tar = a->format->data;
+	int r;
+
+	record_location(a, tar);
+	r = read_entry_header(a, entry);
+	if (r == ARCHIVE_EOF && tar->record_locations)
+		note_end(tar, (size_t)a->archive.file_count - 1);
+	return (r);
+}
+
+static int
+read_entry_header(struct archive_read *a, struct archive_entry *entry)
 {
 	/*
 	 * When converting tar archives to cpio archives, it is
@@ -676,6 +768,159 @@ archive_read_format_tar_read_data(struct archive_read *a,
 			return (ARCHIVE_OK);
 		/* Current is hole data and skip this. */
 	}
+}
+
+/* Forgets what is left of the entry that was being read. */
+static void
+drop_entry(struct tar *tar)
+{
+	tar->entry_bytes_remaining = 0;
+	tar->entry_bytes_unconsumed = 0;
+	tar->entry_padding = 0;
+	gnu_clear_sparse_list(tar);
+}
+
+/*
+ * Puts the reader at the header of the entry at index, if its location is
+ * known, and drops what is left of the entry that was being read.  The
+ * default numbers of the entries only depend on their index.
+ */
+static int
+go_to_entry(struct archive_read *a, struct tar *tar, int64_t index)
+{
+	int64_t r;
+
+	if ((uint64_t)index < tar->locations_count) {
+		r = __archive_read_seek(a, tar->locations[index], SEEK_SET);
+		if (r < 0)
+			return ((int)r);
+		drop_entry(tar);
+	}
+	tar->default_dev = (int)(index / 0xffff);
+	tar->default_inode = (int)(index % 0xffff);
+	return (ARCHIVE_OK);
+}
+
+/*
+ * Makes sure that the location of the header at index is known, and that
+ * there is a header.  That of an entry that has not been read yet is found by
+ * reading the headers that come before it, from the last location that is
+ * known, and the header itself, to see that it is not the end of the archive.
+ * Sets *moved when the reader has moved.  Returns
+ *  - ARCHIVE_OK if the location is known;
+ *  - ARCHIVE_EOF if there is no such entry, and the reader is then at the
+ *    end of the archive;
+ *  - ARCHIVE_FAILED if the reader could not move, or the memory ran out.
+ *    The error is set, and the reader has not moved, except that if it had
+ *    when the memory ran out, it was put back at the entry that comes next,
+ *    and what was left of the entry that was being read is lost;
+ *  - ARCHIVE_FATAL if the archive can't be read any more, which includes
+ *    a reader that has moved and could not be put back.
+ */
+static int
+find_location(struct archive_read *a, struct tar *tar, int64_t index,
+    int *moved)
+{
+	struct archive_entry *entry;
+	int64_t r;
+	int ret = ARCHIVE_OK;
+
+	/* The location after it is only known if its header has been read. */
+	if ((uint64_t)index + 1 < tar->locations_count)
+		return (ARCHIVE_OK);
+	if (tar->locations_count == 0) {
+		/* No header has been read, so none can be read from. */
+		archive_set_error(&a->archive, EINVAL, "Invalid entry index");
+		return (ARCHIVE_FAILED);
+	}
+
+	if ((entry = archive_entry_new()) == NULL) {
+		archive_set_error(&a->archive, ENOMEM,
+		    "Cannot seek to a header: out of memory");
+		return (ARCHIVE_FAILED);
+	}
+	r = __archive_read_seek(a, tar->locations[tar->locations_count - 1],
+	    SEEK_SET);
+	if (r < 0) {
+		archive_entry_free(entry);
+		return ((int)r);
+	}
+	*moved = 1;
+	drop_entry(tar);
+
+	/* Each header found tells where the next one starts. */
+	while ((uint64_t)index + 1 >= tar->locations_count) {
+		ret = read_entry_header(a, entry);
+		if (ret == ARCHIVE_EOF) {
+			note_end(tar, tar->locations_count - 1);
+			break;
+		}
+		if (ret == ARCHIVE_FATAL)
+			break;
+		if ((ret = archive_read_format_tar_skip(a)) != ARCHIVE_OK)
+			break;
+		if (add_location(tar, a->filter->position) != ARCHIVE_OK) {
+			/* Go back to the entry that comes next. */
+			if (go_to_entry(a, tar, a->archive.file_count) ==
+			    ARCHIVE_OK) {
+				archive_set_error(&a->archive, ENOMEM,
+				    "Cannot seek to a header: out of memory");
+				ret = ARCHIVE_FAILED;
+			} else
+				ret = ARCHIVE_FATAL;
+			break;
+		}
+	}
+	archive_entry_free(entry);
+	return (ret);
+}
+
+/*
+ * Makes the next header the one of the entry at index.  A tar entry does not
+ * depend on the entries before it, so going to it only means dropping what
+ * is left of the entry that was being read.  If there is no such entry, the
+ * reader goes to the end of the archive.
+ */
+static int
+archive_read_format_tar_seek_header(struct archive_read *a, int64_t index)
+{
+	struct tar *tar = a->format->data;
+	int ret = ARCHIVE_OK, moved = 0, r;
+
+	if (!tar->record_locations) {
+		archive_set_error(&a->archive, ENOTSUP,
+		    "The locations of the headers are not recorded: "
+		    "set the record-locations option");
+		return (ARCHIVE_FAILED);
+	}
+	if (tar->locations_failed) {
+		archive_set_error(&a->archive, ENOMEM,
+		    "Cannot seek to a header: the locations of the headers "
+		    "could not be recorded");
+		return (ARCHIVE_FAILED);
+	}
+
+	if (!tar->entry_count_known || index < tar->entry_count) {
+		ret = find_location(a, tar, index, &moved);
+		if (ret == ARCHIVE_FATAL || ret == ARCHIVE_FAILED)
+			return (ret);
+	}
+	if (tar->entry_count_known && index >= tar->entry_count) {
+		index = tar->entry_count;
+		ret = ARCHIVE_EOF;
+	}
+
+	/*
+	 * If the reader has moved to find the entry and cannot go to it, it is
+	 * not where the caller thinks it is, and cannot be put back.
+	 */
+	r = go_to_entry(a, tar, index);
+	if (r != ARCHIVE_OK)
+		return (moved ? ARCHIVE_FATAL : r);
+
+	if (ret == ARCHIVE_EOF)
+		a->archive.file_count = (int)index;
+	return (ret);
 }
 
 static int

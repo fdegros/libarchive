@@ -659,8 +659,10 @@ __LA_DECL la_int64_t		 archive_read_header_position(struct archive *);
  * archive_read_header_position() still tells where the previous one was.
  *
  * Only some formats can do this, and only if the archive is read straight
- * from a source that can seek, because filters can't seek.  No format can
- * yet.
+ * from a source that can seek, because filters can't seek:
+ *  - tar, if the "record-locations" format option is set before the archive
+ *    is opened.  The entries that have not been read yet are found by
+ *    reading the headers that come before them.
  *
  * The call is accepted when:
  *  - the handle is an open read handle that has not been closed.  Anything
@@ -669,7 +671,9 @@ __LA_DECL la_int64_t		 archive_read_header_position(struct archive *);
  *  - entry_index is not negative.  Otherwise the result is ARCHIVE_FAILED
  *    with EINVAL;
  *  - the format and the source can seek, as above.  Otherwise the result is
- *    ARCHIVE_FAILED with ENOTSUP.
+ *    ARCHIVE_FAILED with ENOTSUP;
+ *  - the memory did not run out while the locations were recorded.
+ *    Otherwise the result is ARCHIVE_FAILED with ENOMEM.
  *
  * If there is no entry at entry_index, the result is ARCHIVE_EOF, and the
  * reader is at the end of the archive, as if archive_read_next_header() had
@@ -677,7 +681,11 @@ __LA_DECL la_int64_t		 archive_read_header_position(struct archive *);
  * only another seek can get the reader out of that state.
  *
  * A call that returns ARCHIVE_FAILED leaves the archive as it was, so that
- * the caller can carry on reading.
+ * the caller can carry on reading.  The exception is a tar entry that has not
+ * been read yet, because finding it moves the reader: if the memory runs out
+ * while doing so, the reader goes to the entry that comes next, and what was
+ * left of the entry that was being read is lost.  If the source fails to seek
+ * after the reader has moved, the result is ARCHIVE_FATAL.
  */
 __LA_DECL int archive_read_seek_header(struct archive *, la_int64_t /* entry_index */);
 

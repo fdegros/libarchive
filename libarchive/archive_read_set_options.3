@@ -275,6 +275,16 @@ Ignore zeroed blocks in the archive, which occurs when multiple tar archives
 have been concatenated together.
 Without this option, only the contents of
 the first concatenated archive would be read.
+.It Cm record-locations
+Record where each header is found while the archive is read, so that
+.Fn archive_read_seek_header
+go to an entry.
+An entry that has not been read yet is found by reading the headers that
+come before it.
+This works only if the archive is read straight from a source that can
+seek, without a decompression filter.
+Each recorded location takes eight bytes of memory.
+Defaults to disabled.
 .El
 .It Format zip
 .Bl -tag -compact -width indent
