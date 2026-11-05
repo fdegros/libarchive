@@ -241,6 +241,7 @@ archive_read_support_format_mtree(struct archive *_a)
 	    read_data,
 	    skip,
 	    NULL,
+	    NULL,
 	    cleanup,
 	    NULL,
 	    NULL);

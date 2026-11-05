@@ -120,6 +120,7 @@ archive_read_support_format_ar(struct archive *_a)
 	    archive_read_format_ar_read_data,
 	    archive_read_format_ar_skip,
 	    NULL,
+	    NULL,
 	    archive_read_format_ar_cleanup,
 	    NULL,
 	    NULL);

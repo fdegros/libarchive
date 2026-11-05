@@ -205,6 +205,14 @@ struct archive_read {
 		int	(*read_data)(struct archive_read *, const void **, size_t *, int64_t *);
 		int	(*read_data_skip)(struct archive_read *);
 		int64_t	(*seek_data)(struct archive_read *, int64_t, int);
+		/*
+		 * Makes the next header the one of the entry at index.  If
+		 * there is no such entry, it puts the reader at the end of the
+		 * archive, sets file_count to the number of entries and
+		 * returns ARCHIVE_EOF.
+		 */
+		int	(*seek_header)(struct archive_read *,
+		    int64_t index);
 		int	(*cleanup)(struct archive_read *);
 		int	(*format_capabilties)(struct archive_read *);
 		int	(*has_encrypted_entries)(struct archive_read *);
@@ -238,6 +246,7 @@ int	__archive_read_register_format(struct archive_read *a,
 		int (*read_data)(struct archive_read *, const void **, size_t *, int64_t *),
 		int (*read_data_skip)(struct archive_read *),
 		int64_t (*seek_data)(struct archive_read *, int64_t, int),
+		int (*seek_header)(struct archive_read *, int64_t index),
 		int (*cleanup)(struct archive_read *),
 		int (*format_capabilities)(struct archive_read *),
 		int (*has_encrypted_entries)(struct archive_read *));

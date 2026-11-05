@@ -155,6 +155,7 @@ archive_read_support_format_warc(struct archive *_a)
 	    archive_read_format_warc_read_data,
 	    archive_read_format_warc_skip,
 	    NULL,
+	    NULL,
 	    archive_read_format_warc_cleanup,
 	    NULL,
 	    NULL);

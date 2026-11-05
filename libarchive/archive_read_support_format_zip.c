@@ -4218,6 +4218,7 @@ archive_read_support_format_zip_streamable(struct archive *_a)
 	    archive_read_format_zip_read_data,
 	    archive_read_format_zip_read_data_skip_streamable,
 	    NULL,
+	    NULL,
 	    archive_read_format_zip_cleanup,
 	    archive_read_support_format_zip_capabilities_streamable,
 	    archive_read_format_zip_has_encrypted_entries);
@@ -5096,6 +5097,7 @@ archive_read_support_format_zip_seekable(struct archive *_a)
 	    archive_read_format_zip_read_data,
 	    archive_read_format_zip_read_data_skip_seekable,
 	    archive_read_format_zip_seek_data,
+	    NULL,
 	    archive_read_format_zip_cleanup,
 	    archive_read_support_format_zip_capabilities_seekable,
 	    archive_read_format_zip_has_encrypted_entries);

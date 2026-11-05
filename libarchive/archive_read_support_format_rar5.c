@@ -4678,6 +4678,7 @@ int archive_read_support_format_rar5(struct archive *_a) {
 	    rar5_read_data,
 	    rar5_read_data_skip,
 	    rar5_seek_data,
+	    NULL,
 	    rar5_cleanup,
 	    rar5_capabilities,
 	    rar5_has_encrypted_entries);

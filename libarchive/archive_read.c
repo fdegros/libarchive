@@ -1281,6 +1281,7 @@ __archive_read_register_format(struct archive_read *a,
     int (*read_data)(struct archive_read *, const void **, size_t *, int64_t *),
     int (*read_data_skip)(struct archive_read *),
     int64_t (*seek_data)(struct archive_read *, int64_t, int),
+    int (*seek_header)(struct archive_read *, int64_t),
     int (*cleanup)(struct archive_read *),
     int (*format_capabilities)(struct archive_read *),
     int (*has_encrypted_entries)(struct archive_read *))
@@ -1303,6 +1304,7 @@ __archive_read_register_format(struct archive_read *a,
 			a->formats[i].read_data = read_data;
 			a->formats[i].read_data_skip = read_data_skip;
 			a->formats[i].seek_data = seek_data;
+			a->formats[i].seek_header = seek_header;
 			a->formats[i].cleanup = cleanup;
 			a->formats[i].data = format_data;
 			a->formats[i].name = name;

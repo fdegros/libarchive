@@ -291,6 +291,7 @@ archive_read_support_format_tar(struct archive *_a)
 	    archive_read_format_tar_read_data,
 	    archive_read_format_tar_skip,
 	    NULL,
+	    NULL,
 	    archive_read_format_tar_cleanup,
 	    NULL,
 	    NULL);

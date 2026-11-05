@@ -483,6 +483,7 @@ archive_read_support_format_iso9660(struct archive *_a)
 	    archive_read_format_iso9660_read_data,
 	    archive_read_format_iso9660_read_data_skip,
 	    NULL,
+	    NULL,
 	    archive_read_format_iso9660_cleanup,
 	    NULL,
 	    NULL);
