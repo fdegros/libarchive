@@ -24,7 +24,12 @@
  */
 #include "test.h"
 
-static unsigned char buff[16384];
+#define PASSPHRASE "the passphrase"
+
+static unsigned char buff[262144];
+
+/* The number of bytes that make_archive_of_four() puts before the archive. */
+static size_t prefix_size;
 
 /* Writes a tar archive of two files to buff, and returns its size. */
 static size_t
@@ -161,7 +166,10 @@ init_entries(void)
 /*
  * Writes an archive of four entries to buff, and returns its size.  The
  * third one has a long name, that needs more headers than the others.
- * The kinds are 0: pax, 1: GNU tar, 2: gzip-compressed pax and 3: cpio.
+ * The kinds are 0: pax, 1: GNU tar, 2: gzip-compressed pax, 3: cpio,
+ * 4: zip, 5: zip with stored entries, 6: zip with traditional encryption
+ * and 7: zip with AES-256 encryption.  It returns 0 when the encryption is
+ * not available.  prefix_size bytes are put before the archive.
  */
 static size_t
 make_archive_of_four(int kind)
@@ -179,14 +187,33 @@ make_archive_of_four(int kind)
 	else if (kind == 3)
 		assertEqualIntA(a, ARCHIVE_OK,
 		    archive_write_set_format_cpio_newc(a));
-	else
+	else if (kind >= 4) {
+		assertEqualIntA(a, ARCHIVE_OK, archive_write_set_format_zip(a));
+		if (kind == 5)
+			assertEqualIntA(a, ARCHIVE_OK,
+			    archive_write_zip_set_compression_store(a));
+		if (kind >= 6) {
+			if (archive_write_set_options(a, kind == 6 ?
+			    "zip:encryption=zipcrypt" :
+			    "zip:encryption=aes256") != ARCHIVE_OK) {
+				assertEqualInt(ARCHIVE_OK,
+				    archive_write_free(a));
+				return (0);
+			}
+			assertEqualIntA(a, ARCHIVE_OK,
+			    archive_write_set_passphrase(a, PASSPHRASE));
+			assertEqualIntA(a, ARCHIVE_OK,
+			    archive_write_set_options(a, "zip:experimental"));
+		}
+	} else
 		assertEqualIntA(a, ARCHIVE_OK,
 		    archive_write_set_format_pax_restricted(a));
 	if (kind == 2)
 		assertEqualIntA(a, ARCHIVE_OK,
 		    archive_write_add_filter_gzip(a));
-	assertEqualIntA(a, ARCHIVE_OK,
-	    archive_write_open_memory(a, buff, sizeof(buff), &used));
+	memset(buff, 'x', prefix_size);
+	assertEqualIntA(a, ARCHIVE_OK, archive_write_open_memory(a,
+	    buff + prefix_size, sizeof(buff) - prefix_size, &used));
 	for (i = 0; i < 4; i++) {
 		assert((ae = archive_entry_new()) != NULL);
 		archive_entry_set_pathname(ae, names[i]);
@@ -200,7 +227,7 @@ make_archive_of_four(int kind)
 	}
 	assertEqualIntA(a, ARCHIVE_OK, archive_write_close(a));
 	assertEqualInt(ARCHIVE_OK, archive_write_free(a));
-	return (used);
+	return (prefix_size + used);
 }
 
 /*
@@ -215,6 +242,11 @@ open_with_option(size_t size, int option)
 	assert((a = archive_read_new()) != NULL);
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_support_filter_all(a));
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_support_format_all(a));
+	/* A wrong passphrase comes first, to be tried and left. */
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_read_add_passphrase(a, "not the passphrase"));
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_read_add_passphrase(a, PASSPHRASE));
 	if (option == 1 || option == 3)
 		assertEqualIntA(a, ARCHIVE_OK,
 		    archive_read_set_options(a, "record-locations"));
@@ -264,7 +296,8 @@ struct first {
 };
 
 static void
-seek_and_check(struct archive *a, int i, const struct first *first)
+seek_and_check(struct archive *a, int i, const struct first *first,
+    int check_positions)
 {
 	struct archive_entry *ae;
 
@@ -276,12 +309,19 @@ seek_and_check(struct archive *a, int i, const struct first *first)
 	check_entry(a, ae, i);
 	assertEqualInt(first[i].dev, archive_entry_dev(ae));
 	assertEqualInt(first[i].ino, archive_entry_ino(ae));
-	assertEqualInt(first[i].position, archive_read_header_position(a));
+	if (check_positions)
+		assertEqualInt(first[i].position,
+		    archive_read_header_position(a));
 }
 
-/* Goes back to the entries of an archive of four entries. */
+/*
+ * Goes back to the entries of an archive of four entries.  The position
+ * of a tar header is where it starts, but the position of a zip header is
+ * where the reader was before it found the entry, so it is only checked
+ * for tar.
+ */
 static void
-test_kind(int kind)
+test_kind(int kind, int check_positions)
 {
 	static const int order[] = {2, 0, 3, 1, 3, 0, 2};
 	char data[16];
@@ -289,10 +329,17 @@ test_kind(int kind)
 	struct archive_entry *ae;
 	struct first first[4];
 	size_t size = make_archive_of_four(kind);
+	/* Zip does not need the option, tar does. */
+	int option = kind >= 4 ? 0 : 1;
 	size_t i;
 
+	if (size == 0) {
+		skipping("This system does not have cryptographic library");
+		return;
+	}
+
 	/* Read the entries, the data of every other one. */
-	a = open_with_option(size, 1);
+	a = open_with_option(size, option);
 	for (i = 0; i < 4; i++) {
 		assertEqualIntA(a, ARCHIVE_OK,
 		    archive_read_next_header(a, &ae));
@@ -307,16 +354,16 @@ test_kind(int kind)
 
 	/* From the end of the archive, go to the entries in any order. */
 	for (i = 0; i < sizeof(order) / sizeof(order[0]); i++)
-		seek_and_check(a, order[i], first);
+		seek_and_check(a, order[i], first, check_positions);
 
 	/* From the middle of the data of an entry. */
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_seek_header(a, 3));
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &ae));
 	assertEqualInt(10, archive_read_data(a, data, 10));
-	seek_and_check(a, 0, first);
+	seek_and_check(a, 0, first, check_positions);
 
 	/* The entries after the one that is read now can be reached too. */
-	seek_and_check(a, 3, first);
+	seek_and_check(a, 3, first, check_positions);
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_seek_header(a, 1));
 	assertEqualInt(1, archive_file_count(a));
 	assertEqualIntA(a, ARCHIVE_FAILED, archive_read_seek_header(a, -1));
@@ -337,7 +384,7 @@ test_kind(int kind)
 	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
 
 	/* The next entry is where the reader is. */
-	a = open_with_option(size, 1);
+	a = open_with_option(size, option);
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &ae));
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &ae));
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_seek_header(a, 2));
@@ -347,7 +394,7 @@ test_kind(int kind)
 	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
 
 	/* And so is the end of the archive. */
-	a = open_with_option(size, 1);
+	a = open_with_option(size, option);
 	for (i = 0; i < 4; i++)
 		assertEqualIntA(a, ARCHIVE_OK,
 		    archive_read_next_header(a, &ae));
@@ -369,12 +416,18 @@ test_forward(int kind)
 	struct archive_entry *ae;
 	char data[16];
 	size_t size = make_archive_of_four(kind);
+	int option = kind >= 4 ? 0 : 1;
+
+	if (size == 0) {
+		skipping("This system does not have cryptographic library");
+		return;
+	}
 
 	/*
 	 * Only the first header and some of its data are read, and the third
 	 * entry is gone to.
 	 */
-	a = open_with_option(size, 1);
+	a = open_with_option(size, option);
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &ae));
 	assertEqualInt(1, archive_file_count(a));
 	assertEqualInt(3, archive_read_data(a, data, 3));
@@ -394,7 +447,7 @@ test_forward(int kind)
 	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
 
 	/* So is it with an index that is far too large. */
-	a = open_with_option(size, 1);
+	a = open_with_option(size, option);
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &ae));
 	assertEqualIntA(a, ARCHIVE_EOF,
 	    archive_read_seek_header(a, (la_int64_t)1 << 40));
@@ -406,7 +459,7 @@ test_forward(int kind)
 	 * The same goes for an index after it, whether it is the first time
 	 * that the end is found or not.  Then the reader can go back.
 	 */
-	a = open_with_option(size, 1);
+	a = open_with_option(size, option);
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &ae));
 	assertEqualIntA(a, ARCHIVE_EOF, archive_read_seek_header(a, 5));
 	assertEqualInt(4, archive_file_count(a));
@@ -425,10 +478,55 @@ test_forward(int kind)
 DEFINE_TEST(test_read_seek_header_tar)
 {
 	/* A pax archive and a GNU tar archive, which have long name headers. */
-	test_kind(0);
-	test_kind(1);
+	test_kind(0, 1);
+	test_kind(1, 1);
 	test_forward(0);
 	test_forward(1);
+}
+
+DEFINE_TEST(test_read_seek_header_zip)
+{
+	/* Compressed entries, and stored entries. */
+	test_kind(4, 0);
+	test_kind(5, 0);
+	test_forward(4);
+	test_forward(5);
+}
+
+DEFINE_TEST(test_read_seek_header_zip_prefix)
+{
+	static const size_t prefixes[] = {1, 1000, 100000};
+	size_t i;
+
+	/* The offsets in the archive are counted from the start of the data. */
+	for (i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+		prefix_size = prefixes[i];
+		test_kind(4, 0);
+		test_kind(5, 0);
+	}
+	prefix_size = 0;
+}
+
+DEFINE_TEST(test_read_seek_header_zip_encrypted)
+{
+	struct archive *a;
+	struct archive_entry *ae;
+	size_t size;
+	int kind;
+
+	for (kind = 6; kind <= 7; kind++) {
+		/* The entries really are encrypted... */
+		if ((size = make_archive_of_four(kind)) > 0) {
+			a = open_with_option(size, 1);
+			assertEqualIntA(a, ARCHIVE_OK,
+			    archive_read_next_header(a, &ae));
+			assertEqualInt(1, archive_entry_is_data_encrypted(ae));
+			assertEqualIntA(a, ARCHIVE_OK, archive_read_close(a));
+			assertEqualInt(ARCHIVE_OK, archive_read_free(a));
+		}
+		/* ... and are decrypted again each time they are read. */
+		test_kind(kind, 0);
+	}
 }
 
 DEFINE_TEST(test_read_seek_header_unsupported)
@@ -475,6 +573,17 @@ DEFINE_TEST(test_read_seek_header_unsupported)
 	/* A format that can't seek to a header. */
 	size = make_archive_of_four(3);
 	a = open_with_option(size, 1);
+	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &ae));
+	assert_seek_fails(a, 0, ENOTSUP);
+	assertEqualIntA(a, ARCHIVE_OK, archive_read_close(a));
+	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
+
+	/* The zip reader that does not use the central directory. */
+	size = make_archive_of_four(4);
+	assert((a = archive_read_new()) != NULL);
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_read_support_format_zip_streamable(a));
+	assertEqualIntA(a, ARCHIVE_OK, archive_read_open_memory(a, buff, size));
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &ae));
 	assert_seek_fails(a, 0, ENOTSUP);
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_close(a));
@@ -561,14 +670,21 @@ seek_and_compare(struct archive *a, int i, const struct seen *want)
 }
 
 static struct archive *
-open_reference(const char *name)
+open_reference(const char *name, int record_locations)
 {
 	struct archive *a;
 
 	assert((a = archive_read_new()) != NULL);
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_support_format_all(a));
 	assertEqualIntA(a, ARCHIVE_OK,
-	    archive_read_set_options(a, "record-locations"));
+	    archive_read_add_passphrase(a, "invalid_pass"));
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_read_add_passphrase(a, "12345678"));
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_read_add_passphrase(a, "password"));
+	if (record_locations)
+		assertEqualIntA(a, ARCHIVE_OK,
+		    archive_read_set_options(a, "record-locations"));
 	assertEqualIntA(a, ARCHIVE_OK,
 	    archive_read_open_filename(a, name, 10240));
 	return (a);
@@ -578,19 +694,20 @@ open_reference(const char *name)
  * Goes to the entries of a file in the opposite order of the one they are
  * read in, and then in the same order, and checks that they are the same as
  * when they were read the first time.  Then another reader that has read
- * the first header only goes to the entries that it has not read.
+ * the first header only goes to the entries that it has not read.  Tar has
+ * to be asked to record the locations of the headers.
  */
 static void
-test_file(const char *name)
+test_file(const char *name, int record_locations)
 {
 	struct seen seen[MAX_SEEN];
 	struct archive *a;
 	struct archive_entry *ae;
-	int n = 0, i, result;
+	int n = 0, i, result, readable = 0;
 
 	current_file = name;
 	extract_reference_file(name);
-	a = open_reference(name);
+	a = open_reference(name, record_locations);
 
 	/* Read the entries from the start. */
 	while (n < MAX_SEEN) {
@@ -605,13 +722,22 @@ test_file(const char *name)
 		seen[n].bytes = 0;
 		seen[n].hash = 0;
 		seen[n].data_result = 0;
-		if (result == ARCHIVE_OK || result == ARCHIVE_WARN)
+		if (result == ARCHIVE_OK || result == ARCHIVE_WARN) {
 			digest_entry(a, &seen[n]);
+			if (seen[n].data_result == 0 && seen[n].bytes > 0)
+				readable++;
+		}
 		n++;
 	}
 	failure("%s", name);
 	assertEqualIntA(a, ARCHIVE_EOF, result);
 	assert(n > 0);
+	/* The passphrase is the right one for this file: not just errors. */
+	if (strstr(name, "traditional_encryption_data") != NULL) {
+		assert(readable > 0);
+	} else if (strstr(name, "winzip_aes") != NULL && readable == 0) {
+		skipping("This system does not have cryptographic library");
+	}
 
 	for (i = n - 1; i >= 0; i--)
 		seek_and_compare(a, i, seen);
@@ -622,7 +748,7 @@ test_file(const char *name)
 	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
 
 	/* Go forward, to the last entry, the middle one, and back. */
-	a = open_reference(name);
+	a = open_reference(name, record_locations);
 	assertEqualIntA(a, seen[0].header_result,
 	    archive_read_next_header(a, &ae));
 	seek_and_compare(a, n - 1, seen);
@@ -634,6 +760,81 @@ test_file(const char *name)
 
 	for (i = 0; i < n; i++)
 		free(seen[i].name);
+}
+
+DEFINE_TEST(test_read_seek_header_zip_files)
+{
+	static const char *refs[] = {
+		"test_compat_zip_1.zip",
+		"test_compat_zip_2.zip",
+		"test_compat_zip_3.zip",
+		"test_compat_zip_4.zip",
+		"test_compat_zip_5.zip",
+		"test_compat_zip_6.zip",
+		"test_compat_zip_8.zip",
+		"test_read_data_into_fd_size_exceeds_declared_deflate.zip",
+		"test_read_data_into_fd_size_exceeds_declared_stored.zip",
+		"test_read_format_zip.zip",
+		"test_read_format_zip_sfx",
+		"test_read_format_zip_7075_utf8_paths.zip",
+		"test_read_format_zip_7z_deflate.zip",
+		"test_read_format_zip_7z_lzma.zip",
+		"test_read_format_zip_comment_stored_1.zip",
+		"test_read_format_zip_comment_stored_2.zip",
+		"test_read_format_zip_encryption_data.zip",
+		"test_read_format_zip_encryption_partially.zip",
+		"test_read_format_zip_filename_cp866.zip",
+		"test_read_format_zip_filename_cp932.zip",
+		"test_read_format_zip_filename_koi8r.zip",
+		"test_read_format_zip_filename_utf8_jp.zip",
+		"test_read_format_zip_filename_utf8_ru.zip",
+		"test_read_format_zip_filename_utf8_ru2.zip",
+		"test_read_format_zip_high_compression.zip",
+		"test_read_format_zip_length_at_end.zip",
+		"test_read_format_zip_mac_metadata.zip",
+		"test_read_format_zip_msdos.zip",
+		"test_read_format_zip_nested.zip",
+		"test_read_format_zip_nofiletype.zip",
+		"test_read_format_zip_padded1.zip",
+		"test_read_format_zip_padded2.zip",
+		"test_read_format_zip_padded3.zip",
+		"test_read_format_zip_pkware_unix.zip",
+		"test_read_format_zip_size_exceeds_declared_deflate.zip",
+		"test_read_format_zip_size_exceeds_declared_stored.zip",
+		"test_read_format_zip_symlink.zip",
+		"test_read_format_zip_symlink_unsupported_compression.zip",
+		"test_read_format_zip_traditional_encryption_data.zip",
+		"test_read_format_zip_ux.zip",
+		"test_read_format_zip_winzip_aes128.zip",
+		"test_read_format_zip_winzip_aes256.zip",
+		"test_read_format_zip_winzip_aes256_stored.zip",
+		"test_read_format_zip_with_invalid_traditional_eocd.zip",
+		"test_read_format_zip_zip64a.zip",
+		"test_read_format_zip_zip64b.zip",
+		"test_write_disk_appledouble_zip.zip",
+	};
+	struct archive *a;
+	struct archive_entry *ae;
+	size_t r;
+
+	for (r = 0; r < sizeof(refs) / sizeof(refs[0]); r++)
+		test_file(refs[r], 0);
+
+	/*
+	 * The padding makes the central directory unusable, so the entries
+	 * are found as they come, and none of them can be gone back to.
+	 */
+	extract_reference_file("test_read_format_zip_extra_padding.zip");
+	assert((a = archive_read_new()) != NULL);
+	assertEqualIntA(a, ARCHIVE_OK, archive_read_support_format_all(a));
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_read_set_options(a, "record-locations"));
+	assertEqualIntA(a, ARCHIVE_OK, archive_read_open_filename(a,
+	    "test_read_format_zip_extra_padding.zip", 10240));
+	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &ae));
+	assert_seek_fails(a, 0, ENOTSUP);
+	assertEqualIntA(a, ARCHIVE_OK, archive_read_close(a));
+	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
 }
 
 DEFINE_TEST(test_read_seek_header_tar_files)
@@ -665,7 +866,7 @@ DEFINE_TEST(test_read_seek_header_tar_files)
 	size_t r;
 
 	for (r = 0; r < sizeof(refs) / sizeof(refs[0]); r++)
-		test_file(refs[r]);
+		test_file(refs[r], 1);
 }
 
 /* More entries than the locations are first made room for. */
@@ -678,7 +879,7 @@ many_name(char *name, size_t size, int i)
 }
 
 static void
-make_many(const char *filename)
+make_many(const char *filename, int zip)
 {
 	struct archive *a;
 	struct archive_entry *ae;
@@ -686,8 +887,11 @@ make_many(const char *filename)
 	int i, length;
 
 	assert((a = archive_write_new()) != NULL);
-	assertEqualIntA(a, ARCHIVE_OK,
-	    archive_write_set_format_pax_restricted(a));
+	if (zip)
+		assertEqualIntA(a, ARCHIVE_OK, archive_write_set_format_zip(a));
+	else
+		assertEqualIntA(a, ARCHIVE_OK,
+		    archive_write_set_format_pax_restricted(a));
 	assertEqualIntA(a, ARCHIVE_OK,
 	    archive_write_open_filename(a, filename));
 	for (i = 0; i < MANY; i++) {
@@ -789,8 +993,17 @@ DEFINE_TEST(test_read_seek_header_many)
 	size_t size, start, length;
 	int i;
 
-	/* A tar file, read from the file, not from memory. */
-	make_many("many.tar");
+	/* A zip file and a tar file, read from the files, not from memory. */
+	make_many("many.zip", 1);
+	assert((a = archive_read_new()) != NULL);
+	assertEqualIntA(a, ARCHIVE_OK, archive_read_support_format_all(a));
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_read_open_filename(a, "many.zip", 10240));
+	read_and_go_back(a);
+	assertEqualIntA(a, ARCHIVE_OK, archive_read_close(a));
+	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
+
+	make_many("many.tar", 0);
 	assert((a = archive_read_new()) != NULL);
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_support_format_all(a));
 	assertEqualIntA(a, ARCHIVE_OK,

@@ -660,6 +660,7 @@ __LA_DECL la_int64_t		 archive_read_header_position(struct archive *);
  *
  * Only some formats can do this, and only if the archive is read straight
  * from a source that can seek, because filters can't seek:
+ *  - zip, if the archive has a central directory, for any of its entries;
  *  - tar, if the "record-locations" format option is set before the archive
  *    is opened.  The entries that have not been read yet are found by
  *    reading the headers that come before them.

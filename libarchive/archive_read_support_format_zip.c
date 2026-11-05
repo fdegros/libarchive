@@ -107,6 +107,11 @@ struct zip_entry {
 	uint32_t		rdevmajor;
 	uint32_t		rdevminor;
 	uint32_t		crc32;
+	/* What the central directory says, which reading the entry changes. */
+	int64_t			central_compressed_size;
+	int64_t			central_uncompressed_size;
+	uint32_t		central_crc32;
+	char			central_saved;
 	uint16_t		mode;
 	uint16_t		zip_flags; /* From GP Flags Field */
 	uint16_t		flags; /* Our extra markers. */
@@ -184,6 +189,11 @@ struct zip {
 
 	/* Information about entry we're currently reading. */
 	struct zip_entry	*entry;
+	/* The entry that the next header is for, after a seek. */
+	struct zip_entry	*next_entry;
+	/* The entries in the order they are read, to seek to them. */
+	struct zip_entry	**ordered_entries;
+	size_t			ordered_entries_count;
 	int64_t			entry_bytes_remaining;
 
 	/* These count the number of bytes actually read for the entry. */
@@ -1380,6 +1390,28 @@ zip_read_local_file_header(struct archive_read *a, struct archive_entry *entry,
 	struct zip_entry zip_entry_central_dir;
 	int ret = ARCHIVE_OK;
 	char version;
+
+	/*
+	 * Reading an entry changes its sizes, for example those of a symlink.
+	 * An entry that is read again after a seek starts as the central
+	 * directory had it.
+	 */
+	if (zip_entry->flags & LA_FROM_CENTRAL_DIRECTORY) {
+		if (!zip_entry->central_saved) {
+			zip_entry->central_compressed_size =
+			    zip_entry->compressed_size;
+			zip_entry->central_uncompressed_size =
+			    zip_entry->uncompressed_size;
+			zip_entry->central_crc32 = zip_entry->crc32;
+			zip_entry->central_saved = 1;
+		} else {
+			zip_entry->compressed_size =
+			    zip_entry->central_compressed_size;
+			zip_entry->uncompressed_size =
+			    zip_entry->central_uncompressed_size;
+			zip_entry->crc32 = zip_entry->central_crc32;
+		}
+	}
 
 	/* Save a copy of the original for consistency checks. */
 	zip_entry_central_dir = *zip_entry;
@@ -3900,6 +3932,7 @@ archive_read_format_zip_cleanup(struct archive_read *a)
 #endif
 
 	free(zip->uncompressed_buffer);
+	free(zip->ordered_entries);
 
 	if (zip->ppmd8_valid)
 		__archive_ppmd8_functions.Ppmd8_Free(&zip->ppmd8);
@@ -4913,6 +4946,10 @@ archive_read_format_zip_seekable_read_header(struct archive_read *a,
 		 * other entries in the archive file. */
 		zip->entry =
 		    (struct zip_entry *)ARCHIVE_RB_TREE_MIN(&zip->tree);
+	} else if (zip->next_entry != NULL) {
+		/* The entry that a seek went to. */
+		zip->entry = zip->next_entry;
+		zip->next_entry = NULL;
 	} else if (zip->entry != NULL) {
 		/* Get next entry in local header offset order. */
 		zip->entry = (struct zip_entry *)__archive_rb_tree_iterate(
@@ -5059,6 +5096,61 @@ archive_read_format_zip_read_data_skip_seekable(struct archive_read *a)
 	return (ARCHIVE_OK);
 }
 
+/*
+ * Makes the next header the one of the entry at index.  The entries come in
+ * the order of the offset of their local header, which is the order of the
+ * tree.  The header reader goes to the entry by itself, as it does for every
+ * entry.  If there is no such entry, the reader goes to the end of the
+ * archive.
+ */
+static int
+archive_read_format_zip_seek_header(struct archive_read *a, int64_t index)
+{
+	struct zip *zip = a->format->data;
+	struct zip_entry *entry, **ordered;
+	size_t count;
+
+	if (zip->zip_entries == NULL) {
+		/* The central directory has not been read. */
+		archive_set_error(&a->archive, EINVAL, "Invalid entry index");
+		return (ARCHIVE_FAILED);
+	}
+
+	if (zip->ordered_entries == NULL) {
+		/* All the entries are in the list, and some are in the tree. */
+		for (count = 1, entry = zip->zip_entries; entry != NULL;
+		    entry = entry->next)
+			count++;
+		ordered = malloc(count * sizeof(*ordered));
+		if (ordered == NULL) {
+			archive_set_error(&a->archive, ENOMEM,
+			    "Can't allocate the list of ZIP entries");
+			return (ARCHIVE_FAILED);
+		}
+		count = 0;
+		entry = (struct zip_entry *)ARCHIVE_RB_TREE_MIN(&zip->tree);
+		while (entry != NULL) {
+			ordered[count++] = entry;
+			entry = (struct zip_entry *)__archive_rb_tree_iterate(
+			    &zip->tree, &entry->node, ARCHIVE_RB_DIR_RIGHT);
+		}
+		zip->ordered_entries = ordered;
+		zip->ordered_entries_count = count;
+	}
+
+	count = zip->ordered_entries_count;
+	if ((uint64_t)index < count) {
+		zip->next_entry = zip->ordered_entries[index];
+		return (ARCHIVE_OK);
+	}
+
+	/* Nothing is after the last entry. */
+	zip->next_entry = NULL;
+	zip->entry = count > 0 ? zip->ordered_entries[count - 1] : NULL;
+	a->archive.file_count = (int)count;
+	return (ARCHIVE_EOF);
+}
+
 int
 archive_read_support_format_zip_seekable(struct archive *_a)
 {
@@ -5097,7 +5189,7 @@ archive_read_support_format_zip_seekable(struct archive *_a)
 	    archive_read_format_zip_read_data,
 	    archive_read_format_zip_read_data_skip_seekable,
 	    archive_read_format_zip_seek_data,
-	    NULL,
+	    archive_read_format_zip_seek_header,
 	    archive_read_format_zip_cleanup,
 	    archive_read_support_format_zip_capabilities_seekable,
 	    archive_read_format_zip_has_encrypted_entries);
